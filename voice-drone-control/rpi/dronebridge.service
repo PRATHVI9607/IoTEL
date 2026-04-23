@@ -1,0 +1,21 @@
+#!/bin/bash
+# systemd service for DroneBridge
+
+[Unit]
+Description=Voice Drone Control - MAVLink Bridge
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/voice-drone-control/rpi
+ExecStart=/usr/bin/python3 /home/pi/voice-drone-control/rpi/drone_bridge.py --uart /dev/serial0 --baud 57600 --port 5760
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
