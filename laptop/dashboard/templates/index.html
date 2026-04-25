@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Drone Control | Ground Control Station</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --lokius-primary: #1a1a2e;
+            --lokius-secondary: #16213e;
+            --lokius-accent: #0f3460;
+            --lokius-highlight: #e94560;
+            --lokius-gold: #ffd700;
+            --lokius-mist: #a8a8b3;
+            
+            --eco-dark: #1b4332;
+            --eco-green: #2d6a4f;
+            --eco-light: #40916c;
+            --eco-pale: #52b788;
+            --eco-bright: #74c69d;
+            --eco-soft: #95d5b2;
+            --eco-mint: #b7e4c7;
+            --eco-pastel: #d8f3dc;
+            
+            --bg-dark: #0d1117;
+            --bg-card: #161b22;
+            --bg-hover: #21262d;
+            --border: #30363d;
+            --text: #f0f6fc;
+            --text-sec: #8b949e;
+            --text-muted: #6e7681;
+            
+            --success: #238636;
+            --warning: #d29922;
+            --error: #da3633;
+            --info: #58a6ff;
+            
+            --font-main: 'Inter', -apple-system, sans-serif;
+            --font-code: 'Fira Code', monospace;
+            
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-xl: 16px;
+            
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.4);
+            --shadow-glow: 0 0 20px rgba(45, 106, 79, 0.3);
+            
+            --transition: 0.25s ease;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: var(--font-main);
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(45, 106, 79, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(233, 69, 96, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+        
+        /* ─── Header ─────────────────────────────────────────────── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 28px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-card);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, var(--eco-green), var(--eco-pale));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: var(--shadow-glow);
+        }
+        
+        .logo h1 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--eco-pale), var(--eco-bright));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .logo-sub {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .conn-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-code);
+            font-size: 12px;
+        }
+        
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+            animation: pulse 2s infinite;
+        }
+        
+        .dot.connected {
+            background: var(--eco-pale);
+            box-shadow: 0 0 8px var(--eco-pale);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .theme-toggle {
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 8px 14px;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+        
+        .theme-toggle:hover {
+            border-color: var(--eco-green);
+        }
+        
+        /* ─── Main Grid ──────────────────────────────────── */
+        main {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 16px;
+            padding: 20px 24px;
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            transition: var(--transition);
+        }
+        
+        .card:hover {
+            border-color: var(--eco-light);
+            box-shadow: var(--shadow-glow);
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+        
+        .card-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--eco-dark), var(--eco-green));
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+        
+        /* ─── Telemetry ───────────────────────────────────── */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        .telem-item {
+            background: var(--bg-hover);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            transition: var(--transition);
+        }
+        
+        .telem-item:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .telem-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        
+        .telem-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--eco-pale);
+            font-family: var(--font-code);
+        }
+        
+        .telem-unit {
+            font-size: 0.8rem;
+            color: var(--text-sec);
+            margin-left: 4px;
+        }
+        
+        /* ─── Voice Control ─────────────────────────────────── */
+        .voice-waveform {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 70px;
+            background: var(--bg-hover);
+            border-radius: var(--radius-md);
+            margin-bottom: 16px;
+        }
+        
+        .wave-bar {
+            width: 4px;
+            height: 20px;
+            background: var(--eco-green);
+            border-radius: 2px;
+            animation: wave 1s ease-in-out infinite;
+        }
+        
+        .wave-bar:nth-child(1) { animation-delay: 0s; }
+        .wave-bar:nth-child(2) { animation-delay: 0.1s; }
+        .wave-bar:nth-child(3) { animation-delay: 0.2s; }
+        .wave-bar:nth-child(4) { animation-delay: 0.3s; }
+        .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+        .wave-bar:nth-child(6) { animation-delay: 0.5s; }
+        .wave-bar:nth-child(7) { animation-delay: 0.6s; }
+        .wave-bar:nth-child(8) { animation-delay: 0.7s; }
+        
+        @keyframes wave {
+            0%, 100% { height: 20px; opacity: 0.5; }
+            50% { height: 55px; opacity: 1; }
+        }
+        
+        .voice-waveform.listening .wave-bar {
+            animation: waveListen 0.5s ease-in-out infinite;
+            background: var(--eco-bright);
+        }
+        
+        @keyframes waveListen {
+            0%, 100% { height: 20px; opacity: 0.6; }
+            50% { height: 60px; opacity: 1; }
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--eco-green), var(--eco-light));
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-glow);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            border-color: var(--eco-green);
+        }
+        
+        .command-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        
+        .command-input input {
+            flex: 1;
+            padding: 14px 18px;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text);
+            font-size: 0.95rem;
+            font-family: var(--font-main);
+        }
+        
+        .command-input input:focus {
+            outline: none;
+            border-color: var(--eco-green);
+            box-shadow: 0 0 0 3px rgba(45, 106, 79, 0.2);
+        }
+        
+        .quick-commands {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 14px;
+        }
+        
+        .quick-btn {
+            padding: 10px;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-sec);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: var(--transition);
+            text-align: center;
+        }
+        
+        .quick-btn:hover {
+            background: var(--eco-dark);
+            border-color: var(--eco-green);
+            color: var(--eco-pale);
+        }
+        
+        /* ─── GPS ──────────────────────────────────────────── */
+        .map-placeholder {
+            height: 220px;
+            background: var(--bg-hover);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+        
+        .coords {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        
+        .coord-box {
+            background: var(--bg-hover);
+            padding: 10px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+        }
+        
+        .coord-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        
+        .coord-value {
+            font-family: var(--font-code);
+            font-size: 0.9rem;
+            color: var(--eco-pale);
+            margin-top: 4px;
+        }
+        
+        /* ─── Command Log ───────────────────────────────── */
+        .command-log {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-hover);
+            border-radius: var(--radius-md);
+            padding: 12px;
+        }
+        
+        .log-entry {
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: var(--bg-card);
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .log-cmd { color: var(--eco-pale); font-weight: 500; }
+        .log-time { color: var(--text-muted); font-size: 0.7rem; }
+        .log-status {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+        }
+        
+        .log-status.sent {
+            background: rgba(35, 134, 54, 0.2);
+            color: var(--eco-bright);
+        }
+        
+        /* ─── Flight Modes ──────────────────────────────── */
+        .flight-modes {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .mode-btn {
+            padding: 8px 14px;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-sec);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        
+        .mode-btn:hover {
+            border-color: var(--eco-light);
+            color: var(--text);
+        }
+        
+        .mode-btn.active {
+            background: var(--eco-dark);
+            border-color: var(--eco-green);
+            color: var(--eco-pale);
+        }
+        
+        /* ─── Connection Form ─────────────────────────────── */
+        .conn-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-sec);
+            margin-bottom: 6px;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text);
+            font-size: 0.9rem;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--eco-green);
+        }
+        
+        /* ─── Statistics ────────────────────────────── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        
+        .stat-box {
+            background: var(--bg-hover);
+            padding: 16px;
+            border-radius: var(--radius-md);
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--eco-pale);
+            font-family: var(--font-code);
+        }
+        
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+        
+        /* ─── Alerts ─────────────────────────────────── */
+        .alerts-section {
+            grid-column: span 2;
+        }
+        
+        .alert-item {
+            padding: 10px 14px;
+            margin-bottom: 8px;
+            border-radius: var(--radius-md);
+            font-size: 0.85rem;
+        }
+        
+        .alert-item.critical {
+            background: rgba(218, 54, 51, 0.15);
+            border: 1px solid var(--error);
+            color: #ff6b6b;
+        }
+        
+        .alert-item.high {
+            background: rgba(210, 153, 34, 0.15);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+        }
+        
+        .no-alerts {
+            padding: 20px;
+            text-align: center;
+            color: var(--text-muted);
+        }
+        
+        /* ─── Footer ─────────────────────────────────── */
+        footer {
+            padding: 16px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+        
+        /* ─── Scrollbar ────────────────────────────────── */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-dark); }
+        ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
+        
+        /* ─── Responsive ────────────────────────────────── */
+        @media (max-width: 1200px) {
+            main { grid-template-columns: 1fr 1fr; }
+        }
+        
+        @media (max-width: 768px) {
+            main { grid-template-columns: 1fr; }
+            .quick-commands { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        /* ─── Notification ───────────────────────── */
+        .notification {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            padding: 12px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-md);
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .notification.success { border-color: var(--eco-green); }
+        .notification.error { border-color: var(--error); }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(80px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <div class="logo-icon">🚁</div>
+            <div>
+                <h1>Voice Drone Control</h1>
+                <div class="logo-sub">Ground Control Station</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="conn-status">
+                <div class="dot" id="statusDot"></div>
+                <span id="statusText">Disconnected</span>
+            </div>
+            <button class="theme-toggle" onclick="toggleTheme()">🌙 Theme</button>
+        </div>
+    </header>
+    
+    <main>
+        <!-- Telemetry -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">📊</div>
+                    Telemetry
+                </div>
+            </div>
+            <div class="telemetry-grid">
+                <div class="telem-item">
+                    <div class="telem-label">Altitude</div>
+                    <div class="telem-value"><span id="altValue">0.0</span><span class="telem-unit">m</span></div>
+                </div>
+                <div class="telem-item">
+                    <div class="telem-label">Speed</div>
+                    <div class="telem-value"><span id="speedValue">0.0</span><span class="telem-unit">m/s</span></div>
+                </div>
+                <div class="telem-item">
+                    <div class="telem-label">Heading</div>
+                    <div class="telem-value"><span id="headingValue">0</span><span class="telem-unit">°</span></div>
+                </div>
+                <div class="telem-item">
+                    <div class="telem-label">Battery</div>
+                    <div class="telem-value"><span id="battValue">0</span><span class="telem-unit">%</span></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Voice Control -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">🎤</div>
+                    Voice Control
+                </div>
+            </div>
+            <div class="voice-waveform" id="voiceWaveform">
+                <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                <div class="wave-bar"></div><div class="wave-bar"></div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="voiceBtn" onclick="startVoice()">🎙️ Start</button>
+                <button class="btn btn-secondary" onclick="stopVoice()">Stop</button>
+            </div>
+            <div class="command-input">
+                <input type="text" id="cmdInput" placeholder="Type command..." onkeypress="handleKey(event)">
+                <button class="btn btn-primary" onclick="sendCmd()">Send</button>
+            </div>
+            <div class="quick-commands">
+                <button class="quick-btn" onclick="quickCmd('arm')">Arm</button>
+                <button class="quick-btn" onclick="quickCmd('disarm')">Disarm</button>
+                <button class="quick-btn" onclick="quickCmd('takeoff')">Takeoff</button>
+                <button class="quick-btn" onclick="quickCmd('land')">Land</button>
+                <button class="quick-btn" onclick="quickCmd('rtl')">RTL</button>
+                <button class="quick-btn" onclick="quickCmd('loiter')">Loiter</button>
+                <button class="quick-btn" onclick="quickCmd('guided')">Guided</button>
+                <button class="quick-btn" onclick="quickCmd('auto')">Auto</button>
+            </div>
+        </div>
+        
+        <!-- GPS -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">📍</div>
+                    GPS Location
+                </div>
+            </div>
+            <div class="map-placeholder">Map visualization</div>
+            <div class="coords">
+                <div class="coord-box">
+                    <div class="coord-label">Latitude</div>
+                    <div class="coord-value" id="latValue">--.------</div>
+                </div>
+                <div class="coord-box">
+                    <div class="coord-label">Longitude</div>
+                    <div class="coord-value" id="lonValue">--.------</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Command Log -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">📝</div>
+                    Command Log
+                </div>
+                <button class="quick-btn" onclick="clearLog()" style="padding:4px 8px;">Clear</button>
+            </div>
+            <div class="command-log" id="cmdLog">
+                <div class="log-entry">
+                    <span class="log-cmd">System ready</span>
+                    <span class="log-time">--:--</span>
+                    <span class="log-status sent">INIT</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Flight Modes -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">🛸</div>
+                    Flight Modes
+                </div>
+            </div>
+            <div class="flight-modes">
+                <button class="mode-btn" onclick="setMode('STABILIZE')">Stabilize</button>
+                <button class="mode-btn" onclick="setMode('ALT_HOLD')">Alt Hold</button>
+                <button class="mode-btn" onclick="setMode('LOITER')">Loiter</button>
+                <button class="mode-btn" onclick="setMode('GUIDED')">Guided</button>
+                <button class="mode-btn" onclick="setMode('AUTO')">Auto</button>
+                <button class="mode-btn" onclick="setMode('LAND')">Land</button>
+                <button class="mode-btn" onclick="setMode('RTL')">RTL</button>
+            </div>
+        </div>
+        
+        <!-- Connection -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">🔌</div>
+                    Connection
+                </div>
+            </div>
+            <div class="conn-form">
+                <div class="form-group">
+                    <label>RPI IP Address</label>
+                    <input type="text" id="rpiIP" placeholder="192.168.1.100" value="192.168.1.100">
+                </div>
+                <div class="form-group">
+                    <label>Port</label>
+                    <input type="text" id="rpiPort" placeholder="5760" value="5760">
+                </div>
+                <button class="btn btn-primary" onclick="connectRPI()">Connect</button>
+                <button class="btn btn-secondary" onclick="disconnectRPI()">Disconnect</button>
+            </div>
+        </div>
+        
+        <!-- Statistics -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">📈</div>
+                    Statistics
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value" id="pktsSent">0</div>
+                    <div class="stat-label">Sent</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="pktsRecv">0</div>
+                    <div class="stat-label">Recv</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="uptimeVal">0:00</div>
+                    <div class="stat-label">Uptime</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Alerts -->
+        <div class="card alerts-section">
+            <div class="card-header">
+                <div class="card-title">
+                    <div class="card-icon">⚠️</div>
+                    System Alerts
+                </div>
+            </div>
+            <div id="alertsList">
+                <div class="no-alerts">No alerts - system nominal</div>
+            </div>
+        </div>
+    </main>
+    
+    <footer>
+        Voice Drone Control System | Built with DroneKit & Flask | Loki Theme
+    </footer>
+    
+    <script>
+        let isConnected = false;
+        let rpiIP = '192.168.1.100';
+        let rpiPort = 5760;
+        let statusInterval = null;
+        
+        // Socket.IO connection
+        const socket = io();
+        
+        socket.on('connect', () => {
+            updateConnStatus(true);
+        });
+        
+        socket.on('disconnect', () => {
+            updateConnStatus(false);
+        });
+        
+        socket.on('drone_data', (data) => {
+            updateTelemetry(data.telemetry);
+            updateAlerts(data.alerts);
+        });
+        
+        function updateConnStatus(connected) {
+            isConnected = connected;
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Connected';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = 'Disconnected';
+            }
+        }
+        
+        function updateTelemetry(t) {
+            if (!t) return;
+            
+            document.getElementById('altValue').textContent = (t.altitude || 0).toFixed(1);
+            document.getElementById('speedValue').textContent = (t.groundspeed || 0).toFixed(1);
+            document.getElementById('headingValue').textContent = t.heading || 0;
+            document.getElementById('battValue').textContent = t.battery_level || 0;
+            
+            if (t.latitude && t.longitude) {
+                document.getElementById('latValue').textContent = t.latitude.toFixed(6);
+                document.getElementById('lonValue').textContent = t.longitude.toFixed(6);
+            }
+        }
+        
+        function updateAlerts(alerts) {
+            const list = document.getElementById('alertsList');
+            
+            if (!alerts || alerts.length === 0) {
+                list.innerHTML = '<div class="no-alerts">No alerts - system nominal</div>';
+                return;
+            }
+            
+            list.innerHTML = alerts.map(a => 
+                `<div class="alert-item ${a.severity.toLowerCase()}">
+                    [${a.severity}] ${a.type}: ${a.message}
+                </div>`
+            ).join('');
+        }
+        
+        async function connectRPI() {
+            rpiIP = document.getElementById('rpiIP').value;
+            rpiPort = parseInt(document.getElementById('rpiPort').value);
+            
+            try {
+                const res = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ip: rpiIP, port: rpiPort})
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showNotify('Connected to RPI!', 'success');
+                    updateConnStatus(true);
+                    startStatusPoll();
+                } else {
+                    showNotify('Connection failed!', 'error');
+                }
+            } catch (e) {
+                showNotify('Error: ' + e, 'error');
+            }
+        }
+        
+        async function disconnectRPI() {
+            try {
+                await fetch('/api/disconnect', {method: 'POST'});
+                updateConnStatus(false);
+                showNotify('Disconnected', 'success');
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        function startStatusPoll() {
+            if (statusInterval) clearInterval(statusInterval);
+            
+            statusInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/status');
+                    const data = await res.json();
+                    
+                    if (data.telemetry) {
+                        updateTelemetry(data.telemetry);
+                    }
+                    if (data.alerts) {
+                        updateAlerts(data.alerts);
+                    }
+                    if (data.stats) {
+                        document.getElementById('pktsSent').textContent = data.stats.packets_sent || 0;
+                        document.getElementById('pktsRecv').textContent = data.stats.packets_received || 0;
+                    }
+                    
+                    const uptime = data.uptime || 0;
+                    const mins = Math.floor(uptime / 60);
+                    const secs = Math.floor(uptime % 60);
+                    document.getElementById('uptimeVal').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+                    
+                    updateConnStatus(data.connected);
+                } catch (e) {
+                    console.error(e);
+                }
+            }, 1000);
+        }
+        
+        async function sendCmd() {
+            const input = document.getElementById('cmdInput');
+            const cmd = input.value.trim();
+            
+            if (!cmd) return;
+            
+            try {
+                const res = await fetch('/api/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: cmd})
+                });
+                const data = await res.json();
+                
+                addLogEntry(cmd, data.success ? 'sent' : 'error');
+                input.value = '';
+                showNotify(data.success ? 'Command sent!' : 'Failed!', data.success ? 'success' : 'error');
+            } catch (e) {
+                showNotify('Error: ' + e, 'error');
+            }
+        }
+        
+        function handleKey(e) {
+            if (e.key === 'Enter') sendCmd();
+        }
+        
+        function quickCmd(cmd) {
+            document.getElementById('cmdInput').value = cmd;
+            sendCmd();
+        }
+        
+        function setMode(mode) {
+            document.getElementById('cmdInput').value = mode.toLowerCase();
+            sendCmd();
+        }
+        
+        function addLogEntry(cmd, status) {
+            const log = document.getElementById('cmdLog');
+            const time = new Date().toLocaleTimeString();
+            
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-cmd">${cmd}</span>
+                <span class="log-time">${time}</span>
+                <span class="log-status ${status}">${status}</span>
+            `;
+            
+            log.insertBefore(entry, log.firstChild);
+            
+            while (log.children.length > 20) {
+                log.removeChild(log.lastChild);
+            }
+        }
+        
+        function clearLog() {
+            document.getElementById('cmdLog').innerHTML = '';
+        }
+        
+        function startVoice() {
+            document.getElementById('voiceWaveform').classList.add('listening');
+            document.getElementById('voiceBtn').textContent = '🎙️ Listening...';
+            document.getElementById('voiceBtn').disabled = true;
+            showNotify('Voice recognition started', 'success');
+        }
+        
+        function stopVoice() {
+            document.getElementById('voiceWaveform').classList.remove('listening');
+            document.getElementById('voiceBtn').textContent = '🎙️ Start';
+            document.getElementById('voiceBtn').disabled = false;
+        }
+        
+        function toggleTheme() {
+            // Theme toggle placeholder
+            showNotify('Theme toggle coming soon!', 'success');
+        }
+        
+        function showNotify(msg, type = 'success') {
+            const notif = document.createElement('div');
+            notif.className = `notification ${type}`;
+            notif.textContent = msg;
+            document.body.appendChild(notif);
+            
+            setTimeout(() => notif.remove(), 3000);
+        }
+        
+        // Start status poll on load
+        startStatusPoll();
+    </script>
+</body>
+</html>
