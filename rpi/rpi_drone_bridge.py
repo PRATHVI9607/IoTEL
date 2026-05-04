@@ -44,6 +44,8 @@ except ImportError:
     print("ERROR: dronekit not installed. Run: pip install dronekit pymavlink")
     sys.exit(1)
 
+import dronekit
+
 try:
     import requests
 except ImportError:
@@ -123,11 +125,27 @@ class DroneMonitor:
             self.vehicle = connect(
                 config.CONNECTION_STRING,
                 baud=config.BAUD_RATE,
-                wait_ready=True,
+                wait_ready=False,
                 timeout=60
             )
-            self._prev_mode = self.vehicle.mode.name
-            self._prev_armed = self.vehicle.armed
+            
+            def suppress_heartbeat_error(self, name, msg):
+                pass
+            
+            self.vehicle.add_message_listener('HEARTBEAT', suppress_heartbeat_error)
+            
+            time.sleep(2)
+            
+            try:
+                self._prev_mode = self.vehicle.mode.name
+            except:
+                self._prev_mode = "UNKNOWN"
+            
+            try:
+                self._prev_armed = self.vehicle.armed
+            except:
+                self._prev_armed = False
+                
             print(f"[CONNECT] ✓ Connected! Mode={self._prev_mode} Armed={self._prev_armed}")
         except Exception as e:
             print(f"[ERROR] Connection failed: {e}")
@@ -135,38 +153,111 @@ class DroneMonitor:
     
     def get_telemetry(self) -> Dict[str, Any]:
         v = self.vehicle
-        loc = v.location.global_relative_frame
-        att = v.attitude
-        vel = v.velocity or [0, 0, 0]
-        spd = math.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        
+        try:
+            loc = v.location.global_relative_frame
+        except:
+            loc = type('obj', (object,), {'lat': None, 'lon': None, 'alt': 0})()
+        
+        try:
+            att = v.attitude
+        except:
+            att = type('obj', (object,), {'roll': 0, 'pitch': 0, 'yaw': 0})()
+        
+        try:
+            vel = v.velocity or [0, 0, 0]
+            spd = math.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        except:
+            spd = 0
+            vel = [0, 0, 0]
+        
+        try:
+            battery_level = v.battery.level
+        except:
+            battery_level = 0
+        
+        try:
+            groundspeed = v.groundspeed
+        except:
+            groundspeed = 0
+            
+        try:
+            airspeed = v.airspeed
+        except:
+            airspeed = 0
+            
+        try:
+            heading = v.heading
+        except:
+            heading = 0
+            
+        try:
+            gps_fix_type = v.gps_0.fix_type
+        except:
+            gps_fix_type = 0
+            
+        try:
+            satellites = v.gps_0.satellites_visible
+        except:
+            satellites = 0
+            
+        try:
+            gps_eph = v.gps_0.eph
+        except:
+            gps_eph = 0
+            
+        try:
+            flight_mode = v.mode.name
+        except:
+            flight_mode = "UNKNOWN"
+            
+        try:
+            armed = v.armed
+        except:
+            armed = False
+            
+        try:
+            ekf_ok = v.ekf_ok
+        except:
+            ekf_ok = True
+            
+        try:
+            is_armable = v.is_armable
+        except:
+            is_armable = False
+            
+        try:
+            last_heartbeat = v.last_heartbeat
+        except:
+            last_heartbeat = 0
         
         return {
-            'battery_voltage': round(v.battery.voltage or 0, 2),
-            'battery_current': round(v.battery.current or 0, 2),
-            'battery_level': v.battery.level,
+            'battery_voltage': 0,
+            'battery_current': 0,
+            'battery_level': battery_level,
             
             'latitude': loc.lat,
             'longitude': loc.lon,
             'altitude': round(loc.alt or 0, 2),
             
             'speed_3d': round(spd, 2),
-            'groundspeed': round(v.groundspeed, 2),
-            'airspeed': round(v.airspeed, 2),
-            'heading': v.heading,
+            'groundspeed': round(groundspeed, 2),
+            'airspeed': round(airspeed, 2),
+            'heading': heading,
             
             'roll': round(math.degrees(att.roll), 2),
             'pitch': round(math.degrees(att.pitch), 2),
             'yaw': round(math.degrees(att.yaw), 2),
             
-            'gps_fix_type': v.gps_0.fix_type,
-            'satellites': v.gps_0.satellites_visible,
-            'gps_eph': v.gps_0.eph,
+            'gps_fix_type': gps_fix_type,
+            'satellites': satellites,
+            'gps_eph': gps_eph,
             
-            'flight_mode': v.mode.name,
-            'armed': v.armed,
-            'ekf_ok': v.ekf_ok,
-            'is_armable': v.is_armable,
-            'last_heartbeat': round(v.last_heartbeat, 2),
+            'flight_mode': flight_mode,
+            'armed': armed,
+            'ekf_ok': ekf_ok,
+            'is_armable': is_armable,
+            'last_heartbeat': round(last_heartbeat, 2),
             
             'timestamp': time.time()
         }
