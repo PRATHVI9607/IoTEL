@@ -19,6 +19,12 @@ from collections import deque
 from typing import Optional, Dict, Any
 
 try:
+    from pymavlink import mavutil
+except ImportError:
+    print("ERROR: pymavlink not installed. Run: pip install pymavlink")
+    sys.exit(1)
+
+try:
     import requests
 except ImportError:
     print("ERROR: requests not installed")
@@ -36,7 +42,7 @@ class Config:
     LAPTOP_IP = "192.168.1.100"
     LAPTOP_PORT = 5000
     LAPTOP_URL = f"http://{LAPTOP_IP}:{LAPTOP_PORT}/telemetry"
-    CONNECTION_STRING = "/dev/ttyAMA0"
+    CONNECTION_STRING = "/dev/ttyUSB0"
     BAUD_RATE = 57600
     SEND_INTERVAL = 1.0
     TCP_LISTEN_PORT = 5760
@@ -330,7 +336,6 @@ def main():
     print(f"  UART:   {config.CONNECTION_STRING} @ {config.BAUD_RATE}")
     print("="*60)
     
-    from pymavlink import mavutil
     bridge = DroneBridge()
     try:
         bridge.run()
