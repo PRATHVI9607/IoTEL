@@ -54,7 +54,7 @@ class GCSState:
     def __init__(self):
         self.tcp_socket = None
         self.connected = False
-        self.rpi_ip = '10.58.17.142'
+        self.rpi_ip = '10.193.181.137 '
         self.rpi_port = 5760
         self.web_port = 5000
         
@@ -161,11 +161,16 @@ def index():
 
 @app.route('/api/connect', methods=['POST'])
 def api_connect():
-    data = request.get_json()
-    port = data.get('port', 5760)
-    
-    success = gcs.connect_to_rpi(ip, port)
-    return jsonify({'success': success})
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'No JSON received'}), 400
+        ip = data.get('ip', '127.0.0.1')
+        port = data.get('port', 5760)
+        success = gcs.connect_to_rpi(ip, port)
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/disconnect', methods=['POST'])
