@@ -1,0 +1,236 @@
+# 🎯 Enemy Drone Detection & Telemetry Misleading — Demo Plan
+
+## Overview
+
+**Goal**: Use **two laptops** on the same network to demonstrate:
+1. **Laptop A (Defender)** — Monitors and controls your drone normally via the existing [laptop_gcs.py](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/laptop/laptop_gcs.py)
+2. **Laptop B (Attacker)** — Detects the drone on the network, intercepts telemetry, and attempts to mislead it by injecting fake commands/telemetry
+
+**Answer: Yes, this is absolutely possible** with your current architecture because:
+- The RPI bridge ([rpi_drone_bridge.py](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/rpi/rpi_drone_bridge.py)) exposes an **unauthenticated TCP server** on port `5760`
+- The Laptop GCS ([laptop_gcs.py](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/laptop/laptop_gcs.py)) has an **unauthenticated HTTP endpoint** at `POST /telemetry`
+- Commands are sent over TCP as plaintext JSON — no auth, no encryption
+- Telemetry is sent via HTTP POST — no API key, no verification
+
+---
+
+## Architecture of the Demo
+
+```
+                    ┌──────────────────────┐
+                    │   Raspberry Pi 4     │
+                    │   (On the Drone)     │
+                    │                      │
+                    │ rpi_drone_bridge.py  │
+                    │   - UART ↔ Pixhawk   │
+                    │   - TCP :5760        │
+                    │   - HTTP POST →      │
+                    └────┬──────────┬──────┘
+                         │TCP       │HTTP POST
+                         │          │(/telemetry)
+              ┌──────────┘          └──────────┐
+              ▼                                ▼
+┌──────────────────────┐        ┌──────────────────────┐
+│  LAPTOP A (Defender) │        │  LAPTOP B (Attacker) │
+│                      │        │                      │
+│  laptop_gcs.py       │  WiFi  │  attacker scripts:   │
+│  Dashboard :5000     │◄──────►│  1. scanner.py       │
+│  Voice Control       │        │  2. telemetry_spoof  │
+│  Normal monitoring   │        │  3. cmd_injection    │
+└──────────────────────┘        └──────────────────────┘
+```
+
+---
+
+## Phase-by-Phase Plan
+
+### Phase 1: Network Discovery (Laptop B)
+
+**What to build**: A Python script `scanner.py` that discovers the drone (RPI) on the network.
+
+**How it works**:
+1. Scan the local subnet for open port `5760` (the TCP telemetry bridge)
+2. Also scan for port `5000` (the GCS web server on Laptop A)
+3. Use Python `socket` to attempt connections
+
+**Techniques**:
+- Port scanning with `socket.connect_ex()` on ports 5760 and 5000
+- Optionally use `scapy` for ARP scanning to find all devices on the subnet
+- Identify the RPI by successfully connecting to its TCP port 5760
+
+**Output**: RPI IP address + Laptop A IP address confirmed
+
+---
+
+### Phase 2: Passive Telemetry Sniffing (Laptop B)
+
+**What to build**: A script `sniffer.py` that passively captures telemetry data.
+
+**How it works**: 
+
+> [!IMPORTANT]
+> Your current TCP server on the RPI only accepts **1 client** at a time (`listen(1)` + single `_tcp_client`). 
+> So the attacker must use one of these approaches:
+
+**Option A — HTTP Interception (Easier)**:
+- Since RPI sends telemetry via `POST /telemetry` to the laptop's HTTP endpoint, the attacker can:
+  - Run their own Flask server on a different port
+  - Use ARP spoofing (with `scapy`) to redirect the RPI's traffic to themselves first (Man-in-the-Middle)
+  - Or simply sniff HTTP traffic on the WiFi network using `scapy`'s `sniff()` function
+
+**Option B — TCP Race Condition**:
+- If the attacker connects to the RPI's TCP port `5760` **before** Laptop A does, they receive all telemetry
+
+**Option C — Packet Sniffing (Recommended for demo)**:
+- Use `scapy` to sniff all traffic to/from the RPI IP on the network
+- Parse JSON telemetry packets from the captured traffic
+- No connection stealing needed — purely passive
+
+**Data captured**:
+```json
+{
+  "telemetry": {
+    "latitude": 12.9716, "longitude": 77.5946,
+    "altitude": 10.0, "heading": 180,
+    "battery_level": 75, "flight_mode": "LOITER",
+    "armed": true, "speed_3d": 2.5, ...
+  },
+  "alerts": []
+}
+```
+
+---
+
+### Phase 3: Active Attack — Telemetry Spoofing (Laptop B)
+
+**What to build**: A script `telemetry_spoofer.py` that injects fake telemetry to the GCS.
+
+#### Attack 3A: Spoof the GCS Dashboard
+
+**How it works**:
+- Send fake `POST /telemetry` requests to Laptop A's GCS endpoint (`http://<laptopA_ip>:5000/telemetry`)
+- The endpoint has **zero authentication** — it just does:
+  ```python
+  gcs.telemetry_data = data.get('telemetry', {})
+  gcs.alerts = data.get('alerts', [])
+  ```
+- The attacker can overwrite the dashboard with fake GPS positions, fake battery levels, fake alerts
+
+**Example attacks**:
+| Attack | Spoofed Value | Effect on Dashboard |
+|--------|--------------|---------------------|
+| Fake GPS | lat/lon shifted 500m | Operator sees wrong position |
+| Fake Battery | battery_level: 5% | Operator panics, lands early |
+| Fake Mode | flight_mode: "LAND" | Operator thinks drone is landing |
+| Fake Alerts | GPS_SPOOFING alert | Operator thinks drone is being attacked (ironic!) |
+| Clear Alerts | Empty alerts array | Hide real anomalies |
+
+#### Attack 3B: Command Injection via TCP
+
+**How it works**:
+- Connect to the RPI's TCP port `5760`
+- Send JSON commands in the exact format the system expects:
+  ```json
+  {"command": "land"}
+  {"command": "rtl"}
+  {"command": "arm"}
+  {"command": "mode GUIDED"}
+  ```
+- The RPI's [process_voice_command()](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/rpi/rpi_drone_bridge.py#335-405) will execute these as if they came from the legitimate GCS
+
+**Possible commands to inject** (from the existing [process_voice_command](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/rpi/rpi_drone_bridge.py#335-405) code):
+- `land` — Force the drone to land
+- `rtl` — Return to launch
+- `disarm` — Cut the motors (⚠️ dangerous mid-flight!)
+- `mode STABILIZE` — Switch to manual mode (drone may drift)
+- `takeoff` — Attempt unauthorized takeoff
+
+> [!CAUTION]
+> Command injection into the TCP socket is the **most dangerous** attack because it directly controls the Pixhawk flight controller via DroneKit. In a real scenario, this could crash the drone.
+
+---
+
+### Phase 4: Defense Detection (Laptop A sees the attack)
+
+**What your existing anomaly detection already catches**:
+
+| Attack | Detection | How |
+|--------|-----------|-----|
+| GPS spoofing (fake position) | ✅ `GPS_SPOOFING` alert | Position jump > 25m detected by [detect_anomalies()](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/rpi/rpi_drone_bridge.py#174-263) |
+| GPS jamming | ✅ `GPS_JAMMING` alert | Satellite count < 6 |
+| Unauthorized arming | ✅ `UNEXPECTED_ARM` alert | Armed state change detected |
+| Mode change | ✅ `MODE_CHANGE` alert | Flight mode changed unexpectedly |
+| Heartbeat loss | ✅ `HEARTBEAT_LOSS` alert | No heartbeat for > 3 seconds |
+
+**What it does NOT catch** (improvement opportunities):
+
+| Attack | Why Not Detected |
+|--------|-----------------|
+| Fake telemetry to GCS HTTP | No auth on `/telemetry` endpoint — the GCS blindly trusts any POST |
+| TCP command injection | No authentication on TCP socket |
+| Multiple connected clients | TCP server only tracks one `_tcp_client` |
+| Dashboard data tampering | GCS doesn't verify telemetry source IP |
+
+---
+
+## Demo Script (Step-by-Step)
+
+### Setup
+1. Connect both laptops to the **same WiFi network** as the RPI
+2. Note down all IPs: RPI = `X`, Laptop A = `Y`, Laptop B = `Z`
+
+### Demo Flow
+
+| Step | Laptop A (Defender) | Laptop B (Attacker) | What Audience Sees |
+|------|--------------------|--------------------|-------------------|
+| 1 | Start [laptop_gcs.py](file:///d:/AniEngg/Subjects/Sem6/IDP/Main/laptop/laptop_gcs.py), connect to RPI | — | Normal dashboard, green status |
+| 2 | Drone flying, telemetry streaming | Run `scanner.py` — discovers RPI on port 5760 | Attacker's terminal shows drone found |
+| 3 | Normal monitoring | Run `sniffer.py` — starts capturing telemetry | Attacker sees live GPS, battery, mode |
+| 4 | Dashboard suddenly shows wrong GPS | Run `telemetry_spoofer.py` — sends fake coords | Dashboard map jumps to fake location |
+| 5 | Dashboard shows "Battery: 3%!" panic | Spoofing battery to critical level | Operator might trigger emergency landing |
+| 6 | **Drone actually lands or changes mode** | Run `cmd_injector.py` — sends `{"command":"land"}` | The drone physically responds to attacker's command |
+| 7 | Dashboard shows anomaly alerts | — | Anomaly detection fires: `MODE_CHANGE`, `GPS_SPOOFING` |
+
+---
+
+## Files to Create (New Scripts for Laptop B)
+
+| # | File | Purpose | Key Libraries |
+|---|------|---------|--------------|
+| 1 | `attacker/scanner.py` | Discover drone/GCS on network | `socket`, `ipaddress` |
+| 2 | `attacker/sniffer.py` | Passively capture telemetry packets | `scapy` or `socket` |
+| 3 | `attacker/telemetry_spoofer.py` | Inject fake telemetry to GCS dashboard | `requests` |
+| 4 | `attacker/cmd_injector.py` | Send fake commands to RPI TCP | `socket`, `json` |
+| 5 | `attacker/full_attack.py` | Combined attack with menu interface | All of the above |
+| 6 | `attacker/requirements.txt` | Dependencies | `requests`, `scapy` |
+
+---
+
+## Security Improvements to Propose After Demo
+
+After demonstrating the vulnerabilities, here are defenses you can implement:
+
+1. **TCP Authentication** — Add a shared secret/token to TCP command JSON
+2. **HMAC Signing** — Sign telemetry packets so GCS can verify they came from the RPI
+3. **Source IP Whitelisting** — GCS `/telemetry` endpoint should only accept from known RPI IP
+4. **TLS/SSL** — Encrypt TCP and HTTP connections
+5. **Command Rate Limiting** — Limit command frequency to detect injection floods
+6. **Telemetry Source Verification** — Compare TCP-received telemetry with HTTP-received telemetry; if they differ, raise an alert
+
+---
+
+## Prerequisites and Requirements
+
+### Laptop B (Attacker) needs:
+- Python 3.8+
+- Libraries: `requests`, `scapy`, `socket` (stdlib)
+- Same WiFi network as the drone system
+- Admin/root for `scapy` packet sniffing (optional)
+
+### No changes needed to existing code for the demo
+The attack scripts work against the **current system as-is** because the vulnerabilities are already present.
+
+---
+
+> [!IMPORTANT]
+> **Ethical disclaimer**: This demonstration is for **educational and academic purposes** as part of your IDP project. All testing should be done on **your own equipment** in a controlled environment. Never attempt these techniques on systems you do not own.

@@ -54,7 +54,7 @@ class GCSState:
     def __init__(self):
         self.tcp_socket = None
         self.connected = False
-        self.rpi_ip = '192.168.1.100'
+        self.rpi_ip = '10.58.17.142'
         self.rpi_port = 5760
         self.web_port = 5000
         
@@ -162,7 +162,6 @@ def index():
 @app.route('/api/connect', methods=['POST'])
 def api_connect():
     data = request.get_json()
-    ip = data.get('ip', '192.168.1.100')
     port = data.get('port', 5760)
     
     success = gcs.connect_to_rpi(ip, port)
@@ -200,7 +199,7 @@ def telemetry():
 # ==================== MAIN ====================
 def main():
     parser = argparse.ArgumentParser(description='Laptop Ground Control Station')
-    parser.add_argument('--rpi', default='192.168.1.100', help='RPI IP address')
+    parser.add_argument('--rpi', default='10.58.17.142', help='RPI IP address')
     parser.add_argument('--port', default=5760, type=int, help='RPI port')
     parser.add_argument('--web', default=5000, type=int, help='Web server port')
     args = parser.parse_args()

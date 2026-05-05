@@ -1,5 +1,5 @@
 flask>=2.0.0
-dronekit>=2.14.0
+dronekit
 pymavlink>=2.4.0
 pyserial>=3.5
 requests>=2.28.0
