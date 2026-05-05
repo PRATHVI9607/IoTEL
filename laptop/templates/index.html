@@ -750,6 +750,10 @@
             <div class="telem-value">
               <span id="battValue">0</span><span class="telem-unit">%</span>
             </div>
+            <div
+              id="battInfo"
+              style="font-size: 0.85em; color: #8b949e; margin-top: 2px"
+            ></div>
           </div>
         </div>
       </div>
@@ -989,6 +993,16 @@
         ).toFixed(1);
         document.getElementById("headingValue").textContent = t.heading || 0;
         document.getElementById("battValue").textContent = t.battery_level || 0;
+
+        // Show battery voltage if available
+        let battVolt =
+          t.battery_voltage !== undefined ? t.battery_voltage.toFixed(2) : "--";
+        let battLevel = t.battery_level !== undefined ? t.battery_level : "--";
+        let battInfo = `Level: ${battLevel}% | Voltage: ${battVolt}V`;
+        let battInfoElem = document.getElementById("battInfo");
+        if (battInfoElem) {
+          battInfoElem.textContent = battInfo;
+        }
 
         if (t.latitude && t.longitude) {
           document.getElementById("latValue").textContent =

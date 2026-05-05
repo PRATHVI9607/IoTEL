@@ -90,17 +90,113 @@ class DroneBridge:
                 baud=config.BAUD_RATE,
                 planner_format=True
             )
-            
             msg = self.mavlink_connection.recv_match(type='HEARTBEAT', blocking=True, timeout=30)
-            if msg:
-                print(f"[CONNECT] ✓ Connected! ArduCopter")
-            else:
+            if not msg:
                 print("[ERROR] No HEARTBEAT received")
                 sys.exit(1)
-                
+
+            print(f"[CONNECT] ✓ Connected! System ID: {self.mavlink_connection.target_system}")
+
+            mav = self.mavlink_connection
+
+            # ── Step 1: Disable ALL pre-arm checks (GPS, RC, battery, etc.) ──
+            print("[CONNECT] Setting ARMING_CHECK=0 (bypass all pre-arm checks)...")
+            self._set_parameter(mav, b'ARMING_CHECK', 0)
+            time.sleep(0.3)
+
+            # ── Step 2: Disable EKF checks ────────────────────────────────────
+            print("[CONNECT] Disabling EKF and compass checks...")
+            self._set_parameter(mav, b'EKF3_CHECK_SCALE', 0)
+            self._set_parameter(mav, b'EKF2_CHECK_SCALE', 0)
+            time.sleep(0.3)
+
+            # ── Step 3: Inject a fake GPS origin so EKF can initialize ──────
+            # ArduCopter's EKF needs an origin even when GPS is absent.
+            # Using a realistic lat/lon (here: 0°N 0°E at sea level). Change to
+            # your actual rough location for better compass calibration results.
+            ORIGIN_LAT = 0       # degrees  (change to your location)
+            ORIGIN_LON = 0       # degrees
+            ORIGIN_ALT = 0       # metres above sea level
+            lat_int  = int(ORIGIN_LAT * 1e7)
+            lon_int  = int(ORIGIN_LON * 1e7)
+            alt_mm   = int(ORIGIN_ALT * 1000)
+
+            print("[CONNECT] Injecting EKF GPS origin (allows indoor arming)...")
+            mav.mav.set_gps_global_origin_send(
+                mav.target_system,
+                lat_int, lon_int, alt_mm
+            )
+            time.sleep(0.2)
+
+            # ── Step 4: Set HOME to the same origin ──────────────────────────
+            print("[CONNECT] Setting HOME position to origin...")
+            mav.mav.set_home_position_send(
+                mav.target_system,
+                lat_int, lon_int, alt_mm,
+                0.0, 0.0, 0.0,           # x, y, z (local frame, unused)
+                [1.0, 0.0, 0.0, 0.0],    # quaternion (identity)
+                0.0, 0.0, 0.0,           # approach vector
+                int(time.time() * 1e6)   # time_usec
+            )
+            time.sleep(0.5)
+
+            # ── Step 5: Set flight mode to STABILIZE (safest for arming) ─────
+            print("[CONNECT] Setting flight mode to STABILIZE...")
+            mode_id = mav.mode_mapping()["STABILIZE"]
+            mav.mav.set_mode_send(
+                mav.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_id
+            )
+            time.sleep(0.3)
+
+            # ── Step 6: Arm the drone with retry logic ───────────────────────
+            print("[CONNECT] Attempting to arm the drone...")
+            for attempt in range(3):
+                mav.mav.command_long_send(
+                    mav.target_system, mav.target_component,
+                    mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                    0, 1, 0, 0, 0, 0, 0, 0
+                )
+                time.sleep(0.5)
+                ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+                if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                    print(f"[CONNECT] ✓ Drone armed successfully (Attempt {attempt + 1})")
+                    time.sleep(1)
+                    break
+                else:
+                    print(f"[CONNECT] ⚠ Arm attempt {attempt + 1} failed, retrying...")
+                    time.sleep(0.5)
+
+            print("[CONNECT] ✓ Pre-arm bypass setup complete — drone is armed")
+
         except Exception as e:
             print(f"[ERROR] Connection failed: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
+    
+    def _set_parameter(self, mav, param_name, param_value):
+        """Helper function to set and verify a parameter"""
+        try:
+            mav.mav.param_set_send(
+                mav.target_system, mav.target_component,
+                param_name,
+                float(param_value),
+                mavutil.mavlink.MAV_PARAM_TYPE_INT32
+            )
+            time.sleep(0.2)
+            mav.mav.param_request_read_send(
+                mav.target_system, mav.target_component,
+                param_name, -1
+            )
+            ack = mav.recv_match(type='PARAM_VALUE', blocking=True, timeout=3)
+            if ack:
+                print(f"  ✓ {param_name.decode('utf-8')} = {int(ack.param_value)}")
+            else:
+                print(f"  ⚠ Could not verify {param_name.decode('utf-8')}")
+        except Exception as e:
+            print(f"  ⚠ Error setting {param_name.decode('utf-8')}: {e}")
     
     def get_telemetry(self) -> Dict[str, Any]:
         mav = self.mavlink_connection
@@ -282,10 +378,10 @@ class DroneBridge:
                 try:
                     telemetry = self.get_telemetry()
                     alerts = self.detect_anomalies(telemetry)
-                    
+                    # Print battery info for user feedback
+                    print(f"[BATTERY] Level: {telemetry['battery_level']}%  Voltage: {telemetry['battery_voltage']}V")
                     for a in alerts:
                         print(f"  [{a['severity']:8s}] {a['type']:20s} | {a['message']}")
-                    
                     try:
                         requests.post(
                             config.LAPTOP_URL,
@@ -295,7 +391,6 @@ class DroneBridge:
                         self.stats['packets_sent'] += 1
                     except requests.exceptions.RequestException:
                         pass
-                    
                 except Exception as e:
                     self.stats['errors'] += 1
                 

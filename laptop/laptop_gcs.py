@@ -54,7 +54,7 @@ class GCSState:
     def __init__(self):
         self.tcp_socket = None
         self.connected = False
-        self.rpi_ip = '10.193.181.137 '
+        self.rpi_ip = '10.58.17.137'
         self.rpi_port = 5760
         self.web_port = 5000
         
@@ -204,7 +204,7 @@ def telemetry():
 # ==================== MAIN ====================
 def main():
     parser = argparse.ArgumentParser(description='Laptop Ground Control Station')
-    parser.add_argument('--rpi', default='10.58.17.142', help='RPI IP address')
+    parser.add_argument('--rpi', default='10.58.17.137', help='RPI IP address')
     parser.add_argument('--port', default=5760, type=int, help='RPI port')
     parser.add_argument('--web', default=5000, type=int, help='Web server port')
     args = parser.parse_args()
