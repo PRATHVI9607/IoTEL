@@ -1,41 +1,19 @@
 #!/bin/bash
-#================================================================
-#  Laptop Setup Script for Voice Drone Control
-#  Run this on your laptop
-#================================================================
-
+# IoTEL Laptop GCS — setup with uv
 set -e
 
-echo "============================================"
-echo "  Voice Drone Control - Laptop Setup"
-echo "============================================"
+cd "$(dirname "$0")"
 
-# Check Python
-if ! command -v python3 &> /dev/null; then
-    echo "ERROR: Python 3 not found. Install from python.org"
-    exit 1
+if ! command -v uv &>/dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    source "$HOME/.local/bin/env"
 fi
 
-echo "Python version: $(python3 --version)"
+echo "Syncing dependencies..."
+uv sync
 
-echo "[1/4] Creating virtual environment..."
-python3 -m venv venv
-
-echo "[2/4] Activating virtual environment..."
-source venv/bin/activate 2>/dev/null || source venv/Scripts/activate 2>/dev/null
-
-echo "[3/4] Installing dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
-
-echo "[4/4] Installation complete!"
-echo "============================================"
 echo ""
-echo "Next steps:"
-echo "1. Edit laptop_gcs.py with RPI IP if needed"
-echo "2. Run: python laptop_gcs.py"
-echo "3. Open browser: http://localhost:5000"
-echo ""
-echo "To activate environment in future:"
-echo "  source venv/bin/activate  (Linux/Mac)"
-echo "  venv\\Scripts\\activate   (Windows)"
+echo "Done! Run the GCS with:"
+echo "  uv run python laptop_gcs.py"
+echo "  uv run python laptop_gcs.py --rpi <RPI_IP> --port 5760 --web 5000"

@@ -1,54 +1,50 @@
 #!/bin/bash
-#================================================================
-#  RPI Setup Script for Voice Drone Control
-#  Run this on the Raspberry Pi
-#================================================================
-
+# IoTEL RPI Drone Bridge — setup with uv
+# Run as root: sudo bash setup.sh
 set -e
 
-echo "============================================"
-echo "  Voice Drone Control - RPI Setup"
-echo "============================================"
+cd "$(dirname "$0")"
 
-# Check if running as root
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root: sudo bash setup.sh"
     exit 1
 fi
 
-echo "[1/6] Updating system..."
-apt-get update
-apt-get upgrade -y
+echo "[1/5] Updating system..."
+apt-get update -y
+apt-get install -y python3 python3-pip curl git
 
-echo "[2/6] Installing Python and dependencies..."
-apt-get install -y python3 python3-pip python3-venv git
-
-echo "[3/6] Enabling UART..."
-if ! grep -q "enable_uart=1" /boot/firmware/config.txt; then
-    echo "enable_uart=1" >> /boot/firmware/config.txt
+echo "[2/5] Installing uv..."
+if ! command -v uv &>/dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # Make uv available to root in this session
+    source "$HOME/.local/bin/env" 2>/dev/null || true
+    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 fi
 
-# Disable Bluetooth to free up UART
-echo "[4/6] Disabling Bluetooth..."
-systemctl disable bluetooth || true
-systemctl stop bluetooth || true
+echo "[3/5] Enabling UART & disabling Bluetooth..."
+CONFIG=/boot/firmware/config.txt
+[ -f "$CONFIG" ] || CONFIG=/boot/config.txt
+grep -q "enable_uart=1"     "$CONFIG" || echo "enable_uart=1"     >> "$CONFIG"
+grep -q "dtoverlay=disable-bt" "$CONFIG" || echo "dtoverlay=disable-bt" >> "$CONFIG"
+systemctl disable bluetooth 2>/dev/null || true
+systemctl stop    bluetooth 2>/dev/null || true
 
-# Install Python packages
-echo "[5/6] Installing Python packages..."
-pip3 install --upgrade pip setuptools wheel
-pip3 install dronekit pymavlink pyserial requests
+echo "[4/5] Adding user to dialout (serial port access)..."
+SUDO_USER="${SUDO_USER:-pi}"
+usermod -aG dialout "$SUDO_USER" 2>/dev/null || true
 
-# Create log directory
-echo "[6/6] Creating directories..."
-mkdir -p /var/log || true
+echo "[5/5] Syncing Python dependencies with uv..."
+uv sync
 
-echo "============================================"
-echo "  Setup Complete!"
-echo "============================================"
 echo ""
-echo "Next steps:"
-echo "1. Connect Pixhawk to RPI UART (GPIO 14/15)"
-echo "2. Configure Pixhawk TELEM1 (57600 baud)"
-echo "3. Edit rpi_drone_bridge.py with laptop IP"
-echo "4. Run: sudo python3 rpi_drone_bridge.py"
-echo "5. Reboot if needed: sudo reboot"
+echo "=========================================="
+echo " Setup complete!"
+echo " NOTE: Reboot for UART changes to apply."
+echo "=========================================="
+echo ""
+echo "Run with:"
+echo "  uv run python rpi_drone_bridge.py --ip <LAPTOP_IP>"
+echo ""
+echo "If your project is in ~/IDP_2, run from there:"
+echo "  cd ~/IDP_2/rpi && sudo bash setup.sh"
