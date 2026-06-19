@@ -42,10 +42,11 @@ class Config:
     LAPTOP_IP = "192.168.1.100"
     LAPTOP_PORT = 5000
     LAPTOP_URL = f"http://{LAPTOP_IP}:{LAPTOP_PORT}/telemetry"
-    CONNECTION_STRING = "/dev/ttyUSB0"
+    CONNECTION_STRING = "/dev/ttyAMA0"
     BAUD_RATE = 57600
     SEND_INTERVAL = 1.0
     TCP_LISTEN_PORT = 5760
+    BENCH_MODE = False  # True = bypass GPS/arming for indoor bench testing
 
 
 config = Config()
@@ -95,80 +96,56 @@ class DroneBridge:
                 print("[ERROR] No HEARTBEAT received")
                 sys.exit(1)
 
-            print(f"[CONNECT] ✓ Connected! System ID: {self.mavlink_connection.target_system}")
-
+            print(f"[CONNECT] Connected! System ID: {self.mavlink_connection.target_system}")
             mav = self.mavlink_connection
 
-            # ── Step 1: Disable ALL pre-arm checks (GPS, RC, battery, etc.) ──
-            print("[CONNECT] Setting ARMING_CHECK=0 (bypass all pre-arm checks)...")
-            self._set_parameter(mav, b'ARMING_CHECK', 0)
-            time.sleep(0.3)
+            if config.BENCH_MODE:
+                # Indoor bench testing — bypass GPS/EKF/arming checks so the
+                # PixHawk can arm without a GPS fix or battery.
+                print("[CONNECT] BENCH MODE: bypassing pre-arm checks...")
+                self._set_parameter(mav, b'ARMING_CHECK', 0)
+                time.sleep(0.3)
+                self._set_parameter(mav, b'EKF3_CHECK_SCALE', 0)
+                self._set_parameter(mav, b'EKF2_CHECK_SCALE', 0)
+                time.sleep(0.3)
 
-            # ── Step 2: Disable EKF checks ────────────────────────────────────
-            print("[CONNECT] Disabling EKF and compass checks...")
-            self._set_parameter(mav, b'EKF3_CHECK_SCALE', 0)
-            self._set_parameter(mav, b'EKF2_CHECK_SCALE', 0)
-            time.sleep(0.3)
-
-            # ── Step 3: Inject a fake GPS origin so EKF can initialize ──────
-            # ArduCopter's EKF needs an origin even when GPS is absent.
-            # Using a realistic lat/lon (here: 0°N 0°E at sea level). Change to
-            # your actual rough location for better compass calibration results.
-            ORIGIN_LAT = 0       # degrees  (change to your location)
-            ORIGIN_LON = 0       # degrees
-            ORIGIN_ALT = 0       # metres above sea level
-            lat_int  = int(ORIGIN_LAT * 1e7)
-            lon_int  = int(ORIGIN_LON * 1e7)
-            alt_mm   = int(ORIGIN_ALT * 1000)
-
-            print("[CONNECT] Injecting EKF GPS origin (allows indoor arming)...")
-            mav.mav.set_gps_global_origin_send(
-                mav.target_system,
-                lat_int, lon_int, alt_mm
-            )
-            time.sleep(0.2)
-
-            # ── Step 4: Set HOME to the same origin ──────────────────────────
-            print("[CONNECT] Setting HOME position to origin...")
-            mav.mav.set_home_position_send(
-                mav.target_system,
-                lat_int, lon_int, alt_mm,
-                0.0, 0.0, 0.0,           # x, y, z (local frame, unused)
-                [1.0, 0.0, 0.0, 0.0],    # quaternion (identity)
-                0.0, 0.0, 0.0,           # approach vector
-                int(time.time() * 1e6)   # time_usec
-            )
-            time.sleep(0.5)
-
-            # ── Step 5: Set flight mode to STABILIZE (safest for arming) ─────
-            print("[CONNECT] Setting flight mode to STABILIZE...")
-            mode_id = mav.mode_mapping()["STABILIZE"]
-            mav.mav.set_mode_send(
-                mav.target_system,
-                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-                mode_id
-            )
-            time.sleep(0.3)
-
-            # ── Step 6: Arm the drone with retry logic ───────────────────────
-            print("[CONNECT] Attempting to arm the drone...")
-            for attempt in range(3):
-                mav.mav.command_long_send(
-                    mav.target_system, mav.target_component,
-                    mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
-                    0, 1, 0, 0, 0, 0, 0, 0
+                # Inject fake GPS origin so EKF can initialise indoors
+                lat_int, lon_int, alt_mm = 0, 0, 0
+                mav.mav.set_gps_global_origin_send(mav.target_system, lat_int, lon_int, alt_mm)
+                mav.mav.set_home_position_send(
+                    mav.target_system, lat_int, lon_int, alt_mm,
+                    0.0, 0.0, 0.0, [1.0, 0.0, 0.0, 0.0],
+                    0.0, 0.0, 0.0, int(time.time() * 1e6)
                 )
                 time.sleep(0.5)
-                ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
-                if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                    print(f"[CONNECT] ✓ Drone armed successfully (Attempt {attempt + 1})")
-                    time.sleep(1)
-                    break
-                else:
-                    print(f"[CONNECT] ⚠ Arm attempt {attempt + 1} failed, retrying...")
-                    time.sleep(0.5)
 
-            print("[CONNECT] ✓ Pre-arm bypass setup complete — drone is armed")
+                mode_id = mav.mode_mapping()["STABILIZE"]
+                mav.mav.set_mode_send(
+                    mav.target_system,
+                    mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                    mode_id
+                )
+                time.sleep(0.3)
+
+                for attempt in range(3):
+                    mav.mav.command_long_send(
+                        mav.target_system, mav.target_component,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                        0, 1, 0, 0, 0, 0, 0, 0
+                    )
+                    time.sleep(0.5)
+                    ack = mav.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+                    if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                        print(f"[CONNECT] Armed (bench mode, attempt {attempt + 1})")
+                        break
+                    else:
+                        print(f"[CONNECT] Arm attempt {attempt + 1} failed, retrying...")
+                        time.sleep(0.5)
+            else:
+                # Normal flight mode — respect Mission Planner parameter config.
+                # GPS lock, battery, and EKF must be healthy before arming.
+                print("[CONNECT] Normal mode — using Mission Planner parameters.")
+                print("[CONNECT] Waiting for EKF to initialise (GPS lock needed outdoors)...")
 
         except Exception as e:
             print(f"[ERROR] Connection failed: {e}")
@@ -416,13 +393,16 @@ def main():
     parser.add_argument('--port', default=config.LAPTOP_PORT, type=int)
     parser.add_argument('--uart', default=config.CONNECTION_STRING)
     parser.add_argument('--baud', default=config.BAUD_RATE, type=int)
+    parser.add_argument('--bench', action='store_true',
+                        help='Bench/indoor mode: bypass GPS, EKF and arming checks')
     args = parser.parse_args()
-    
+
     config.LAPTOP_IP = args.ip
     config.LAPTOP_PORT = args.port
     config.LAPTOP_URL = f"http://{args.ip}:{args.port}/telemetry"
     config.CONNECTION_STRING = args.uart
     config.BAUD_RATE = args.baud
+    config.BENCH_MODE = args.bench
     
     print("="*60)
     print("  RPI Drone Bridge (pymavlink)")
