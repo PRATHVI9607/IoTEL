@@ -404,8 +404,12 @@ class DroneBridge:
                 try:
                     telemetry = self.get_telemetry()
                     alerts = self.detect_anomalies(telemetry)
-                    # Print battery info for user feedback
-                    print(f"[BATTERY] Level: {telemetry['battery_level']}%  Voltage: {telemetry['battery_voltage']}V")
+                    fix_labels = {0:'NO_GPS',1:'NO_FIX',2:'2D_FIX',3:'3D_FIX',4:'DGPS',5:'RTK_FLOAT',6:'RTK_FIXED'}
+                    fix_str = fix_labels.get(telemetry['gps_fix_type'], str(telemetry['gps_fix_type']))
+                    lat = f"{telemetry['latitude']:.6f}" if telemetry['latitude'] else "---"
+                    lon = f"{telemetry['longitude']:.6f}" if telemetry['longitude'] else "---"
+                    print(f"[BATT] {telemetry['battery_voltage']}V {telemetry['battery_level']}%  "
+                          f"[GPS] {fix_str} sats={telemetry['satellites']} lat={lat} lon={lon}")
                     for a in alerts:
                         print(f"  [{a['severity']:8s}] {a['type']:20s} | {a['message']}")
                     try:
