@@ -78,10 +78,13 @@ class DroneBridge:
         self._tcp_server = None
         self._tcp_client = None
         self._client_lock = threading.Lock()
-        
+
+        self._msg_cache = {}
+        self._msg_lock = threading.Lock()
+
         self._telemetry_data = {}
         self._alerts = []
-        
+
         self.stats = {'packets_sent': 0, 'packets_recv': 0, 'errors': 0}
     
     def connect(self):
@@ -104,6 +107,9 @@ class DroneBridge:
                 mav.target_system, mav.target_component,
                 mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1
             )
+
+            t = threading.Thread(target=self._recv_loop, daemon=True)
+            t.start()
 
             if config.BENCH_MODE:
                 # Indoor bench testing — bypass GPS/EKF/arming checks so the
@@ -180,14 +186,35 @@ class DroneBridge:
                 print(f"  ⚠ Could not verify {param_name.decode('utf-8')}")
         except Exception as e:
             print(f"  ⚠ Error setting {param_name.decode('utf-8')}: {e}")
-    
-    def get_telemetry(self) -> Dict[str, Any]:
+
+    def _recv_loop(self):
+        """Background thread — reads every MAVLink message and stores latest by type."""
         mav = self.mavlink_connection
-        
+        while self.running or self.mavlink_connection:
+            try:
+                msg = mav.recv_match(blocking=True, timeout=1)
+                if msg is None:
+                    continue
+                with self._msg_lock:
+                    self._msg_cache[msg.get_type()] = msg
+            except Exception:
+                break
+
+    def _get_msg(self, msg_type):
+        with self._msg_lock:
+            return self._msg_cache.get(msg_type)
+
+    def get_telemetry(self) -> Dict[str, Any]:
+        sys_status = self._get_msg('SYS_STATUS')
+        batt       = self._get_msg('BATTERY_STATUS')
+        gps        = self._get_msg('GPS_RAW_INT')
+        att        = self._get_msg('ATTITUDE')
+        hb         = self._get_msg('HEARTBEAT')
+        ekf        = self._get_msg('EKF_STATUS_REPORT')
+        gs         = self._get_msg('GLOBAL_POSITION_INT')
+
+        # Battery
         try:
-            sys_status = mav.recv_match(type='SYS_STATUS', blocking=False)
-            batt = mav.recv_match(type='BATTERY_STATUS', blocking=False)
-            # Voltage + current from SYS_STATUS (total pack, in mV / cA)
             if sys_status and sys_status.voltage_battery > 0:
                 battery_voltage = sys_status.voltage_battery
                 battery_current = sys_status.current_battery if sys_status.current_battery != -1 else 0
@@ -197,7 +224,6 @@ class DroneBridge:
             else:
                 battery_voltage = 0
                 battery_current = 0
-            # Percentage from BATTERY_STATUS (SYS_STATUS returns 0 when BATT_CAPACITY unset)
             if batt and batt.battery_remaining > 0:
                 battery_level = batt.battery_remaining
             elif sys_status and sys_status.battery_remaining > 0:
@@ -205,51 +231,43 @@ class DroneBridge:
             else:
                 battery_level = 100
         except:
-            battery_level = 100
             battery_voltage = 0
             battery_current = 0
-        
+            battery_level = 100
+
+        # GPS
         try:
-            gps = mav.recv_match(type='GPS_RAW_INT', blocking=False)
             if gps:
-                latitude = gps.lat / 1e7
-                longitude = gps.lon / 1e7
-                altitude = gps.alt / 1000.0
-                gps_fix_type = gps.fix_type
-                satellites = gps.satellites_visible
-                gps_eph = gps.eph
+                latitude      = gps.lat / 1e7
+                longitude     = gps.lon / 1e7
+                altitude      = gps.alt / 1000.0
+                gps_fix_type  = gps.fix_type
+                satellites    = gps.satellites_visible
+                gps_eph       = gps.eph
             else:
-                latitude = None
-                longitude = None
-                altitude = 0
-                gps_fix_type = 0
-                satellites = 0
-                gps_eph = 0
+                latitude = longitude = None
+                altitude = gps_fix_type = satellites = gps_eph = 0
         except:
-            latitude = None
-            longitude = None
-            altitude = 0
-            gps_fix_type = 0
-            satellites = 0
-            gps_eph = 0
-        
+            latitude = longitude = None
+            altitude = gps_fix_type = satellites = gps_eph = 0
+
+        # Attitude
         try:
-            att = mav.recv_match(type='ATTITUDE', blocking=False)
             if att:
-                roll = math.degrees(att.roll)
+                roll  = math.degrees(att.roll)
                 pitch = math.degrees(att.pitch)
-                yaw = math.degrees(att.yaw)
+                yaw   = math.degrees(att.yaw)
             else:
                 roll = pitch = yaw = 0
         except:
             roll = pitch = yaw = 0
-        
+
+        # Flight mode + armed
         try:
-            hb = mav.recv_match(type='HEARTBEAT', blocking=False)
             if hb:
                 flight_mode = "STABILIZE"
-                for mode in mav.mode_mapping():
-                    if mav.mode_mapping()[mode] == hb.custom_mode:
+                for mode in self.mavlink_connection.mode_mapping():
+                    if self.mavlink_connection.mode_mapping()[mode] == hb.custom_mode:
                         flight_mode = mode
                 armed = (hb.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED) != 0
             else:
@@ -258,20 +276,19 @@ class DroneBridge:
         except:
             flight_mode = "UNKNOWN"
             armed = False
-        
+
+        # EKF
         try:
-            ekf = mav.recv_match(type='EKF_STATUS', blocking=False)
-            ekf_ok = (ekf.face and ekf.velocity and ekf.pos_horiz) if ekf else True
+            ekf_ok = (ekf.flags & 0x1FF) == 0x1FF if ekf else True
         except:
             ekf_ok = True
-        
+
+        # Speed + heading
         try:
-            gs = mav.recv_match(type='GLOBAL_POSITION_INT', blocking=False)
             groundspeed = math.sqrt(gs.vx**2 + gs.vy**2) / 100.0 if gs else 0
             heading = (gs.hdg / 100) if gs else 0
         except:
-            groundspeed = 0
-            heading = 0
+            groundspeed = heading = 0
         
         return {
             'battery_voltage': round(battery_voltage / 1000.0, 2),
