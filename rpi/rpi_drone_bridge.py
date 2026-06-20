@@ -73,6 +73,7 @@ class DroneBridge:
         self._prev_battery_time = None
         self._prev_mode = None
         self._prev_armed = None
+        self._gps_ever_fixed = False
         
         self._tcp_server = None
         self._tcp_client = None
@@ -300,19 +301,30 @@ class DroneBridge:
     def detect_anomalies(self, t: Dict) -> list:
         alerts = []
         now = time.time()
-        
-        if t['gps_fix_type'] < 3:
+
+        fix = t['gps_fix_type']
+        sats = t['satellites'] or 0
+
+        if fix >= 3:
+            self._gps_ever_fixed = True
+
+        if self._gps_ever_fixed and fix < 3:
+            # Only alert if we HAD a fix and then lost it (real anomaly)
             alerts.append({
                 'type': 'GPS_FIX_LOST',
                 'severity': 'CRITICAL',
-                'message': f"GPS fix lost! Fix type={t['gps_fix_type']}"
+                'message': f"GPS fix lost! Fix type={fix}"
             })
-        
-        if t['satellites'] is not None and t['satellites'] < 6:
+        elif not self._gps_ever_fixed:
+            # Still acquiring — informational only, not an alert
+            fix_labels = {0: 'NO_GPS', 1: 'NO_FIX', 2: '2D_FIX'}
+            print(f"[GPS] Acquiring... ({fix_labels.get(fix, fix)}, {sats} sats)")
+
+        if self._gps_ever_fixed and sats < 6:
             alerts.append({
                 'type': 'GPS_JAMMING',
                 'severity': 'HIGH',
-                'message': f"Low satellites: {t['satellites']}"
+                'message': f"Low satellites: {sats}"
             })
         
         batt = t['battery_level']
