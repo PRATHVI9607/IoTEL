@@ -99,6 +99,11 @@ class DroneBridge:
             print(f"[CONNECT] Connected! System ID: {self.mavlink_connection.target_system}")
             mav = self.mavlink_connection
 
+            mav.mav.request_data_stream_send(
+                mav.target_system, mav.target_component,
+                mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1
+            )
+
             if config.BENCH_MODE:
                 # Indoor bench testing — bypass GPS/EKF/arming checks so the
                 # PixHawk can arm without a GPS fix or battery.
@@ -179,10 +184,25 @@ class DroneBridge:
         mav = self.mavlink_connection
         
         try:
+            sys_status = mav.recv_match(type='SYS_STATUS', blocking=False)
             batt = mav.recv_match(type='BATTERY_STATUS', blocking=False)
-            battery_level = batt.battery_remaining if batt else 100
-            battery_voltage = batt.voltage if batt else 0
-            battery_current = batt.current if batt else 0
+            # Voltage + current from SYS_STATUS (total pack, in mV / cA)
+            if sys_status and sys_status.voltage_battery > 0:
+                battery_voltage = sys_status.voltage_battery
+                battery_current = sys_status.current_battery if sys_status.current_battery != -1 else 0
+            elif batt:
+                battery_voltage = batt.voltages[0] if batt.voltages[0] != 65535 else 0
+                battery_current = batt.current_battery if batt.current_battery != -1 else 0
+            else:
+                battery_voltage = 0
+                battery_current = 0
+            # Percentage from BATTERY_STATUS (SYS_STATUS returns 0 when BATT_CAPACITY unset)
+            if batt and batt.battery_remaining > 0:
+                battery_level = batt.battery_remaining
+            elif sys_status and sys_status.battery_remaining > 0:
+                battery_level = sys_status.battery_remaining
+            else:
+                battery_level = 100
         except:
             battery_level = 100
             battery_voltage = 0
