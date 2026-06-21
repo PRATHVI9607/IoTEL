@@ -54,4 +54,4 @@ echo -e "\033[32mStarting RPI Bridge...\033[0m"
 echo "$(date '+%H:%M:%S') [INFO] Connecting to Pixhawk..."
 echo ""
 
-uv run python3 rpi_drone_bridge.py --laptop "$LAPTOP_IP" --port "$LAPTOP_PORT"
+uv run python3 rpi_drone_bridge.py --ip "$LAPTOP_IP" --port "$LAPTOP_PORT"

@@ -134,6 +134,7 @@ class DroneBridge:
         self._tcp_server = None
         self._tcp_client = None
         self._client_lock = threading.Lock()
+        self._cmd_buffer = b""
 
         self._msg_cache = {}
         self._msg_lock = threading.Lock()
@@ -451,7 +452,10 @@ class DroneBridge:
     def accept_tcp_connection(self) -> bool:
         try:
             self._tcp_client, address = self._tcp_server.accept()
-            self._tcp_client.settimeout(1)
+            # Short timeout: each run-loop pass polls for a command without
+            # blocking long enough to throttle the telemetry push rate.
+            self._tcp_client.settimeout(0.05)
+            self._cmd_buffer = b""
             print(f"[TCP] Connected from {address}")
             return True
         except socket.timeout:
@@ -459,6 +463,112 @@ class DroneBridge:
         except Exception as e:
             return False
     
+    def _poll_commands(self):
+        """Non-blocking read of newline-delimited JSON commands from the GCS."""
+        if not self._tcp_client:
+            return
+        try:
+            data = self._tcp_client.recv(4096)
+            if data == b"":
+                # Peer closed the connection.
+                print("[TCP] GCS disconnected")
+                try:
+                    self._tcp_client.close()
+                except OSError:
+                    pass
+                self._tcp_client = None
+                self._cmd_buffer = b""
+                return
+            self._cmd_buffer += data
+        except socket.timeout:
+            return
+        except (ConnectionResetError, OSError):
+            self._tcp_client = None
+            self._cmd_buffer = b""
+            return
+
+        # The GCS frames each command as JSON + b'\n'.
+        while b"\n" in self._cmd_buffer:
+            line, self._cmd_buffer = self._cmd_buffer.split(b"\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line.decode())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                print(f"[TCP] Ignoring malformed command: {line!r}")
+                continue
+            cmd = msg.get("command", "")
+            if cmd:
+                self.handle_command(cmd)
+
+    def handle_command(self, command: str):
+        """Execute a GCS command on the PixHawk via MAVLink."""
+        mav = self.mavlink_connection
+        if not mav:
+            print(f"[CMD] '{command}' ignored — no MAVLink connection")
+            return
+
+        command = (command or "").strip().lower()
+        print(f"[CMD] Received: {command}")
+
+        # ArduPilot custom flight modes (set via SET_MODE custom mode id).
+        mode_map = {
+            "land": "LAND", "rtl": "RTL", "loiter": "LOITER",
+            "stabilize": "STABILIZE", "guided": "GUIDED",
+            "alt_hold": "ALT_HOLD", "althold": "ALT_HOLD",
+            "auto": "AUTO", "poshold": "POSHOLD",
+        }
+
+        try:
+            if command in ("arm", "disarm"):
+                arm_val = 1 if command == "arm" else 0
+                mav.mav.command_long_send(
+                    mav.target_system, mav.target_component,
+                    mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                    0, arm_val, 0, 0, 0, 0, 0, 0
+                )
+            elif command == "takeoff":
+                mav.mav.command_long_send(
+                    mav.target_system, mav.target_component,
+                    mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                    0, 0, 0, 0, 0, 0, 0, 10  # 10 m target altitude
+                )
+            elif command in mode_map:
+                mode_name = mode_map[command]
+                mapping = mav.mode_mapping() or {}
+                if mode_name not in mapping:
+                    print(f"[CMD] Mode {mode_name} not supported by this airframe")
+                    return
+                mav.mav.set_mode_send(
+                    mav.target_system,
+                    mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                    mapping[mode_name]
+                )
+            else:
+                print(f"[CMD] Unknown command: {command}")
+                return
+        except Exception as e:
+            print(f"[CMD] Error executing '{command}': {e}")
+            return
+
+        # Read the ACK from the cache populated by the _recv_loop thread,
+        # rather than calling recv_match here (which would race that thread).
+        time.sleep(0.3)
+        ack = self._get_msg('COMMAND_ACK')
+        if ack is not None:
+            if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+                print(f"[CMD] '{command}' ACCEPTED by PixHawk")
+            else:
+                result_names = {
+                    1: "TEMPORARILY_REJECTED", 2: "DENIED",
+                    3: "UNSUPPORTED", 4: "FAILED",
+                    5: "IN_PROGRESS",
+                }
+                reason = result_names.get(ack.result, f"result={ack.result}")
+                print(f"[CMD] '{command}' REJECTED by PixHawk: {reason} "
+                      f"(pre-arm check? try --bench indoors or wait for GPS lock)")
+
     def run(self):
         self.connect()
         self.running = True
@@ -473,7 +583,10 @@ class DroneBridge:
             try:
                 if not self._tcp_client:
                     self.accept_tcp_connection()
-                
+
+                # Read & execute any commands the GCS sent over TCP.
+                self._poll_commands()
+
                 t0 = time.time()
                 try:
                     telemetry = self.get_telemetry()

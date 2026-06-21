@@ -813,7 +813,7 @@
             GPS Location
           </div>
         </div>
-        <div class="map-placeholder">Map visualization</div>
+        <div class="map-placeholder" id="mapPlaceholder">Map visualization</div>
         <div class="coords">
           <div class="coord-box">
             <div class="coord-label">Latitude</div>
@@ -822,6 +822,14 @@
           <div class="coord-box">
             <div class="coord-label">Longitude</div>
             <div class="coord-value" id="lonValue">--.------</div>
+          </div>
+          <div class="coord-box">
+            <div class="coord-label">Satellites</div>
+            <div class="coord-value" id="satValue">--</div>
+          </div>
+          <div class="coord-box">
+            <div class="coord-label">GPS Fix</div>
+            <div class="coord-value" id="fixValue">No Fix</div>
           </div>
         </div>
       </div>
@@ -1004,11 +1012,65 @@
           battInfoElem.textContent = battInfo;
         }
 
-        if (t.latitude && t.longitude) {
-          document.getElementById("latValue").textContent =
-            t.latitude.toFixed(6);
-          document.getElementById("lonValue").textContent =
-            t.longitude.toFixed(6);
+        // GPS coordinates — treat null/undefined and 0,0 as "no fix"
+        const latEl = document.getElementById("latValue");
+        const lonEl = document.getElementById("lonValue");
+        const hasFix =
+          t.latitude != null &&
+          t.longitude != null &&
+          !(t.latitude === 0 && t.longitude === 0);
+
+        if (hasFix) {
+          latEl.textContent = Number(t.latitude).toFixed(6);
+          lonEl.textContent = Number(t.longitude).toFixed(6);
+        } else {
+          latEl.textContent = "No Fix";
+          lonEl.textContent = "No Fix";
+        }
+
+        // Satellites
+        const satEl = document.getElementById("satValue");
+        if (satEl) {
+          satEl.textContent =
+            t.satellites != null ? t.satellites : "--";
+        }
+
+        // GPS fix type
+        const fixEl = document.getElementById("fixValue");
+        if (fixEl) {
+          const fixLabels = {
+            0: "No Fix",
+            1: "No Fix",
+            2: "2D Fix",
+            3: "3D Fix",
+            4: "DGPS",
+            5: "RTK Float",
+            6: "RTK Fixed",
+          };
+          const ft = t.gps_fix_type;
+          fixEl.textContent =
+            ft != null ? fixLabels[ft] || "Fix " + ft : "No Fix";
+        }
+
+        // Map placeholder → clickable Google Maps link when we have a position
+        const mapEl = document.getElementById("mapPlaceholder");
+        if (mapEl) {
+          if (hasFix) {
+            mapEl.innerHTML =
+              '<a href="https://www.google.com/maps?q=' +
+              t.latitude +
+              "," +
+              t.longitude +
+              '" target="_blank" rel="noopener" ' +
+              'style="color:var(--eco-pale);text-decoration:underline;">' +
+              "📍 " +
+              Number(t.latitude).toFixed(5) +
+              ", " +
+              Number(t.longitude).toFixed(5) +
+              " — open in Maps ↗</a>";
+          } else {
+            mapEl.textContent = "Map visualization (no GPS fix)";
+          }
         }
       }
 
