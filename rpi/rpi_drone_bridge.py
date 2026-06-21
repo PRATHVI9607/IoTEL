@@ -38,11 +38,67 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Probed in order. ttyAMA0 (GPIO UART) is first because that is where the
+# PixHawk telemetry is wired on this airframe; the CP210x USB bridge enumerates
+# as ttyUSB0 but carries no MAVLink, so detection must verify by heartbeat.
+_CANDIDATE_PORTS = [
+    "/dev/ttyAMA0",   # RPi GPIO UART (GPIO 14/15) — PixHawk TELEM
+    "/dev/serial0",   # usually a symlink to ttyAMA0
+    "/dev/ttyUSB0",   # USB-serial bridge (CP210x/FTDI)
+    "/dev/ttyUSB1",
+    "/dev/ttyACM0",   # PixHawk native USB CDC
+    "/dev/ttyACM1",
+    "/dev/ttyS0",     # mini-UART
+]
+
+
+def _has_heartbeat(port: str, baud: int, timeout: float = 4.0) -> bool:
+    """Open a port briefly and return True only if a MAVLink HEARTBEAT arrives."""
+    try:
+        m = mavutil.mavlink_connection(port, baud=baud)
+    except Exception as e:
+        print(f"[DETECT] {port} @ {baud}: open failed ({e})")
+        return False
+    try:
+        hb = m.recv_match(type='HEARTBEAT', blocking=True, timeout=timeout)
+        if hb:
+            print(f"[DETECT] {port} @ {baud}: HEARTBEAT from system {m.target_system}")
+            return True
+        return False
+    finally:
+        m.close()
+
+
+def detect_serial_port(baud: int) -> str:
+    """Find the port that actually speaks MAVLink, verified by heartbeat."""
+    candidates = [p for p in _CANDIDATE_PORTS
+                  if os.path.exists(p) and os.access(p, os.R_OK | os.W_OK)]
+    if not candidates:
+        # Nothing openable — report what exists so the user knows why
+        existing = [p for p in _CANDIDATE_PORTS if os.path.exists(p)]
+        if existing:
+            raise RuntimeError(
+                f"No accessible serial port. Found {existing} but no R/W permission. "
+                f"Fix: sudo usermod -aG dialout $USER  (then re-login)"
+            )
+        raise RuntimeError("No serial port found. Is the PixHawk connected/powered?")
+
+    print(f"[DETECT] Probing for PixHawk on: {', '.join(candidates)}")
+    for port in candidates:
+        if _has_heartbeat(port, baud):
+            return port
+
+    # No heartbeat anywhere — fall back to the first candidate and let connect()
+    # surface the real error (e.g. PixHawk unpowered).
+    print(f"[DETECT] No heartbeat on any port; falling back to {candidates[0]}")
+    return candidates[0]
+
+
 class Config:
     LAPTOP_IP = "192.168.1.100"
     LAPTOP_PORT = 5000
     LAPTOP_URL = f"http://{LAPTOP_IP}:{LAPTOP_PORT}/telemetry"
-    CONNECTION_STRING = "/dev/ttyAMA0"
+    CONNECTION_STRING = None   # auto-detected at startup
     BAUD_RATE = 57600
     SEND_INTERVAL = 1.0
     TCP_LISTEN_PORT = 5760
@@ -87,9 +143,27 @@ class DroneBridge:
 
         self.stats = {'packets_sent': 0, 'packets_recv': 0, 'errors': 0}
     
+    def _fix_port_permission(self, port: str) -> bool:
+        import subprocess
+        print(f"[PERM] Permission denied on {port} — attempting sudo chmod ...")
+        result = subprocess.run(
+            ["sudo", "chmod", "a+rw", port],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            print(f"[PERM] Fixed permissions on {port}")
+            return True
+        print(f"[PERM] Could not fix automatically: {result.stderr.strip()}")
+        print(f"[PERM] Run once manually:  sudo usermod -aG dialout $USER  then log out/in")
+        return False
+
     def connect(self):
         print(f"\n[CONNECT] Connecting to PixHawk on {config.CONNECTION_STRING}...")
         try:
+            # Auto-fix permission if needed before opening
+            if not os.access(config.CONNECTION_STRING, os.R_OK | os.W_OK):
+                self._fix_port_permission(config.CONNECTION_STRING)
+
             self.mavlink_connection = mavutil.mavlink_connection(
                 config.CONNECTION_STRING,
                 baud=config.BAUD_RATE,
@@ -444,7 +518,7 @@ def main():
     parser = argparse.ArgumentParser(description='RPI Drone Bridge')
     parser.add_argument('--ip', default=config.LAPTOP_IP)
     parser.add_argument('--port', default=config.LAPTOP_PORT, type=int)
-    parser.add_argument('--uart', default=config.CONNECTION_STRING)
+    parser.add_argument('--uart', default=None, help='Serial port (auto-detected if omitted)')
     parser.add_argument('--baud', default=config.BAUD_RATE, type=int)
     parser.add_argument('--bench', action='store_true',
                         help='Bench/indoor mode: bypass GPS, EKF and arming checks')
@@ -453,8 +527,8 @@ def main():
     config.LAPTOP_IP = args.ip
     config.LAPTOP_PORT = args.port
     config.LAPTOP_URL = f"http://{args.ip}:{args.port}/telemetry"
-    config.CONNECTION_STRING = args.uart
     config.BAUD_RATE = args.baud
+    config.CONNECTION_STRING = args.uart if args.uart else detect_serial_port(args.baud)
     config.BENCH_MODE = args.bench
     
     print("="*60)
